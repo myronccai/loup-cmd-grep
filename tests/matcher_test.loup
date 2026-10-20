@@ -1,0 +1,61 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (Syntax);
+from commands.matcher import (Matcher, build_matcher);
+
+func plain(p: string): Matcher {
+    return build_matcher([p], Syntax.Basic, false, false, false).unwrap();
+}
+
+func word(p: string): Matcher {
+    return build_matcher([p], Syntax.Basic, false, true, false).unwrap();
+}
+
+func test_plain_selection(): void {
+    let m = plain("fo*");
+    expect(m.selects("a foo"), "match");
+    expect(!m.selects("bar"), "no match");
+    expectEq(m.matches("foo f fooo").join(","), "foo,f,fooo", "-o parts");
+}
+
+func test_several_patterns(): void {
+    let m = build_matcher(["cat", "dog"], Syntax.Fixed, false, false, false).unwrap();
+    expect(m.selects("hotdog") and m.selects("cats"), "either");
+    expect(!m.selects("cow"), "neither");
+}
+
+func test_ignore_case(): void {
+    let m = build_matcher(["Foo"], Syntax.Basic, true, false, false).unwrap();
+    expect(m.selects("FOO") and m.selects("foo"), "both cases");
+    expectEq(m.matches("a fOo").join(","), "fOo", "original text is kept");
+}
+
+func test_whole_line(): void {
+    let m = build_matcher(["foo", "bar"], Syntax.Basic, false, false, true).unwrap();
+    expect(m.selects("foo") and m.selects("bar"), "whole lines");
+    expect(!m.selects("foobar"), "not part of a line");
+    let both = build_matcher(["foo"], Syntax.Basic, false, true, true).unwrap();
+    expect(!both.selects("a foo"), "-x wins over -w");
+}
+
+func test_whole_words(): void {
+    let m = word("foo");
+    expect(m.selects("a foo b") and m.selects("foo") and m.selects("(foo)"), "words");
+    expect(!m.selects("foobar") and !m.selects("xfoo") and !m.selects("foo_"), "not words");
+    expect(word("-foo-").selects("a -foo- b"), "pattern starting with punctuation");
+    expect(word("").selects("a  b"), "empty match between two spaces");
+    expect(!word("").selects("ab"), "no empty word");
+}
+
+func test_whole_word_parts(): void {
+    expectEq(word("foo").matches("foo foo,foo-foo").join(","), "foo,foo,foo,foo", "adjacent words");
+    expectEq(word("foo").matches("foofoo foo xfoo").join(","), "foo", "only the whole word");
+    expectEq(word("ab*").matches("ab abbbc ab").join(","), "ab,ab", "skips abbbc");
+}
+
+func test_invalid_pattern(): void {
+    let r = build_matcher(["a\\("], Syntax.Basic, false, false, false);
+    expect(r.is_err(), "error");
+    expectEq(r.unwrap_err(), "Unmatched ( or \\(", "message");
+}

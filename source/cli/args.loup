@@ -1,45 +1,187 @@
 @mode(host.dual)
 
-# Command-line parsing. Loup 1.26 has no CLI library, so arguments are
-# parsed by hand into an Options value.
+# Command-line parsing for grep, following GNU getopt_long:
 #
-# Grammar: [OPTIONS] COMMAND [OPERANDS...]
-#   Options may appear anywhere before `--`; everything after `--` is an
-#   operand. Value options accept `--name VALUE` and `--name=VALUE`.
+# - options may appear anywhere before `--`; operands keep their order;
+# - short options combine (`-inr`), and an option that takes a value takes
+#   the rest of its word or the next argument (`-A3`, `-A 3`, `-efoo`);
+# - a run of digits is a context length (`-5` is `-C 5`);
+# - long options take `--name=VALUE` or `--name VALUE` and may be shortened
+#   to any unambiguous prefix (`--ext` for `--extended-regexp`).
+#
+# Parsing happens in two steps: `tokenize` turns argv into a list of `Arg`
+# values, and `parse_args` folds them into `Options`.
 
-pub const DEFAULT_GREETING: string = "Hello";
-
-pub struct Options {
-    pub command: string;
-    pub operands: list[string];
-    pub help: bool;
-    pub version: bool;
-    pub verbose: bool;
-    pub shout: bool;
-    pub greeting: string;
+pub enum Syntax {
+    Basic,
+    Extended,
+    Fixed,
 }
 
-pub func parse_args(argv: list[string]): Result[Options, string] {
-    var command = "";
-    var operands: list[string] = [];
-    var help = false;
-    var version = false;
-    var verbose = false;
-    var shout = false;
-    var greeting = DEFAULT_GREETING;
-    var only_operands = false;
+# Which file names -l / -L print instead of lines.
+pub enum ListMode {
+    Off,
+    Matching,
+    NonMatching,
+}
 
+# The parsed command line. A class, not a struct: it crosses module
+# boundaries, and native builds corrupt struct values that do so when
+# another type shares field names (see AGENTS.md).
+pub class Options {
+    pub var help: bool = false;
+    pub var version: bool = false;
+    pub var syntax: Syntax = Syntax.Basic;
+    pub var patterns: list[string] = [];
+    pub var ignore_case: bool = false;
+    pub var invert: bool = false;
+    pub var word: bool = false;
+    pub var whole_line: bool = false;
+    pub var count: bool = false;
+    pub var list_files: ListMode = ListMode.Off;
+    pub var only_matching: bool = false;
+    pub var quiet: bool = false;
+    pub var no_messages: bool = false;
+    pub var line_number: bool = false;
+    pub var recursive: bool = false;
+    pub var with_filename: int = -1;   # 1 after -H, 0 after -h
+    pub var before: int = -1;
+    pub var after: int = -1;
+    pub var files: list[string] = [];
+}
+
+# A command-line error. `message` has no `grep: ` prefix and is empty for a
+# bare usage error; `usage` asks for the Usage and Try lines after it.
+pub class ArgError {
+    pub let message: string;
+    pub let usage: bool;
+
+    new(message: string, usage: bool) {
+        this.message = message;
+        this.usage = usage;
+    }
+}
+
+# One command-line element after tokenizing.
+pub enum Arg {
+    Opt(key: string, value: string),
+    Operand(text: string),
+    Bad(message: string),
+}
+
+pub struct LongOption {
+    pub name: string;
+    pub key: string;
+    pub has_value: bool;
+}
+
+const SHORT_FLAGS: string = "EFGiwxsvVnHhoqrRLlc";
+const SHORT_WITH_VALUE: string = "eABC";
+const DIGITS: string = "0123456789";
+
+# The long options, in the order GNU lists them for an ambiguous prefix.
+pub func long_options(): list[LongOption] {
+    return [
+        LongOption(name = "extended-regexp", key = "E", has_value = false),
+        LongOption(name = "fixed-strings", key = "F", has_value = false),
+        LongOption(name = "basic-regexp", key = "G", has_value = false),
+        LongOption(name = "regexp", key = "e", has_value = true),
+        LongOption(name = "ignore-case", key = "i", has_value = false),
+        LongOption(name = "no-ignore-case", key = "no-ignore-case", has_value = false),
+        LongOption(name = "word-regexp", key = "w", has_value = false),
+        LongOption(name = "line-regexp", key = "x", has_value = false),
+        LongOption(name = "no-messages", key = "s", has_value = false),
+        LongOption(name = "invert-match", key = "v", has_value = false),
+        LongOption(name = "version", key = "V", has_value = false),
+        LongOption(name = "help", key = "help", has_value = false),
+        LongOption(name = "line-number", key = "n", has_value = false),
+        LongOption(name = "with-filename", key = "H", has_value = false),
+        LongOption(name = "no-filename", key = "h", has_value = false),
+        LongOption(name = "only-matching", key = "o", has_value = false),
+        LongOption(name = "quiet", key = "q", has_value = false),
+        LongOption(name = "silent", key = "q", has_value = false),
+        LongOption(name = "recursive", key = "r", has_value = false),
+        LongOption(name = "dereference-recursive", key = "R", has_value = false),
+        LongOption(name = "files-with-matches", key = "l", has_value = false),
+        LongOption(name = "files-without-match", key = "L", has_value = false),
+        LongOption(name = "count", key = "c", has_value = false),
+        LongOption(name = "before-context", key = "B", has_value = true),
+        LongOption(name = "after-context", key = "A", has_value = true),
+        LongOption(name = "context", key = "C", has_value = true),
+    ];
+}
+
+# Indexes of the long options `name` selects: the exact match if there is
+# one, otherwise every option it is a prefix of.
+pub func find_long(name: string): list[int] {
+    let table = long_options();
+    var found: list[int] = [];
     var i = 0;
+    while (i < table.len()) {
+        if (table[i].name == name) {
+            return [i];
+        }
+        if (name.len() > 0 and table[i].name.startsWith(name)) {
+            found.push(i);
+        }
+        i += 1;
+    }
+    return found;
+}
+
+# Splits a -e value or pattern operand into its newline-separated patterns.
+pub func split_patterns(text: string): list[string] {
+    var out: list[string] = [];
+    var current = "";
+    for (ch in text) {
+        if (ch == "\n") {
+            out.push(current);
+            current = "";
+        } else {
+            current += ch;
+        }
+    }
+    out.push(current);
+    return out;
+}
+
+# A context length, or -1 when `text` is not a non-negative integer.
+# Very large values are capped, as GNU grep does.
+pub func context_length(text: string): int {
+    if (text.len() == 0) {
+        return -1;
+    }
+    var n = 0;
+    for (ch in text) {
+        let d = DIGITS.index_of(ch);
+        if (d < 0) {
+            return -1;
+        }
+        if (n < 1000000000) {
+            n = n * 10 + d;
+        }
+    }
+    return n;
+}
+
+func chars_of(text: string): list[string] {
+    var out: list[string] = [];
+    for (ch in text) {
+        out.push(ch);
+    }
+    return out;
+}
+
+# Turns argv into options, operands and (at the first error) a Bad element.
+pub func tokenize(argv: list[string]): list[Arg] {
+    var out: list[Arg] = [];
+    var i = 0;
+    var only_operands = false;
     while (i < argv.len()) {
         let arg = argv[i];
         i += 1;
-
         if (only_operands or arg == "-" or !arg.startsWith("-")) {
-            if (command.is_empty()) {
-                command = arg;
-            } else {
-                operands.push(arg);
-            }
+            out.push(Arg.Operand(text = arg));
             continue;
         }
         if (arg == "--") {
@@ -47,52 +189,199 @@ pub func parse_args(argv: list[string]): Result[Options, string] {
             continue;
         }
 
-        # Split `--name=value` into its name and inline value.
-        var name = arg;
-        var inline_value: Option[string] = None;
-        if (arg.startsWith("--") and arg.contains("=")) {
-            let parts = arg.split("=");
-            name = parts[0];
-            inline_value = Some(parts.slice(1).join("="));
-        }
-
-        if (name == "-g" or name == "--greeting") {
-            match inline_value {
-                Some(v) => { greeting = v; },
-                None => {
-                    if (i >= argv.len()) {
-                        return Err(i"option '{$ name $}' requires a value");
-                    }
-                    greeting = argv[i];
-                    i += 1;
-                },
+        if (arg.startsWith("--")) {
+            let body = arg.slice(2);
+            let eq = body.index_of("=");
+            let name = if (eq >= 0) { body.slice(0, eq) } else { body };
+            let found = find_long(name);
+            if (found.len() == 0) {
+                out.push(Arg.Bad(message = i"unrecognized option '{$ arg $}'"));
+                return out;
             }
+            let table = long_options();
+            if (found.len() > 1) {
+                var names = "";
+                for (k in found) {
+                    names += i" '--{$ table[k].name $}'";
+                }
+                out.push(Arg.Bad(message = i"option '--{$ name $}' is ambiguous; possibilities:{$ names $}"));
+                return out;
+            }
+            let opt = table[found[0]];
+            var value = "";
+            if (opt.has_value) {
+                if (eq >= 0) {
+                    value = body.slice(eq + 1);
+                } else if (i < argv.len()) {
+                    value = argv[i];
+                    i += 1;
+                } else {
+                    out.push(Arg.Bad(message = i"option '--{$ opt.name $}' requires an argument"));
+                    return out;
+                }
+            } else if (eq >= 0) {
+                out.push(Arg.Bad(message = i"option '--{$ opt.name $}' doesn't allow an argument"));
+                return out;
+            }
+            out.push(Arg.Opt(key = opt.key, value = value));
             continue;
         }
 
-        if (inline_value.is_some()) {
-            return Err(i"option '{$ name $}' does not take a value");
+        # A cluster of short options.
+        let chars = chars_of(arg);
+        var j = 1;
+        var digits = "";
+        while (j < chars.len()) {
+            let c = chars[j];
+            j += 1;
+            if (DIGITS.index_of(c) >= 0) {
+                digits += c;
+                if (j >= chars.len() or DIGITS.index_of(chars[j]) < 0) {
+                    out.push(Arg.Opt(key = "NUM", value = digits));
+                    digits = "";
+                }
+                continue;
+            }
+            if (SHORT_WITH_VALUE.index_of(c) >= 0) {
+                var value = "";
+                if (j < chars.len()) {
+                    value = arg.slice(j);
+                } else if (i < argv.len()) {
+                    value = argv[i];
+                    i += 1;
+                } else {
+                    out.push(Arg.Bad(message = i"option requires an argument -- '{$ c $}'"));
+                    return out;
+                }
+                out.push(Arg.Opt(key = c, value = value));
+                break;
+            }
+            if (SHORT_FLAGS.index_of(c) >= 0) {
+                out.push(Arg.Opt(key = c, value = ""));
+                continue;
+            }
+            out.push(Arg.Bad(message = i"invalid option -- '{$ c $}'"));
+            return out;
         }
-        if (name == "-h" or name == "--help") {
-            help = true;
-        } else if (name == "-V" or name == "--version") {
-            version = true;
-        } else if (name == "-v" or name == "--verbose") {
-            verbose = true;
-        } else if (name == "--shout") {
-            shout = true;
-        } else {
-            return Err(i"unknown option '{$ name $}'");
+    }
+    return out;
+}
+
+func syntax_of(key: string): Syntax {
+    if (key == "E") {
+        return Syntax.Extended;
+    }
+    if (key == "F") {
+        return Syntax.Fixed;
+    }
+    return Syntax.Basic;
+}
+
+# Applies an option that takes no value.
+safe func apply_flag(edits o: Options, key: string): void {
+    if (key == "i") {
+        o.ignore_case = true;
+    } else if (key == "no-ignore-case") {
+        o.ignore_case = false;
+    } else if (key == "w") {
+        o.word = true;
+    } else if (key == "x") {
+        o.whole_line = true;
+    } else if (key == "s") {
+        o.no_messages = true;
+    } else if (key == "v") {
+        o.invert = true;
+    } else if (key == "V") {
+        o.version = true;
+    } else if (key == "help") {
+        o.help = true;
+    } else if (key == "n") {
+        o.line_number = true;
+    } else if (key == "H") {
+        o.with_filename = 1;
+    } else if (key == "h") {
+        o.with_filename = 0;
+    } else if (key == "o") {
+        o.only_matching = true;
+    } else if (key == "q") {
+        o.quiet = true;
+    } else if (key == "r" or key == "R") {
+        o.recursive = true;
+    } else if (key == "L") {
+        o.list_files = ListMode.NonMatching;
+    } else if (key == "l") {
+        o.list_files = ListMode.Matching;
+    } else if (key == "c") {
+        o.count = true;
+    }
+}
+
+pub safe func parse_args(argv: list[string]): Result[Options, ArgError] {
+    let opts = Options();
+    var syntax_given = false;
+    var pattern_given = false;
+    var context = 0;
+    var operands: list[string] = [];
+
+    for (tok in tokenize(argv)) {
+        match tok {
+            Arg.Bad(message) => {
+                return Err(ArgError(message, true));
+            },
+            Arg.Operand(text) => {
+                operands.push(text);
+            },
+            Arg.Opt(key, value) => {
+                if (key == "E" or key == "F" or key == "G") {
+                    let wanted = syntax_of(key);
+                    if (syntax_given and wanted != opts.syntax) {
+                        return Err(ArgError("conflicting matchers specified", false));
+                    }
+                    opts.syntax = wanted;
+                    syntax_given = true;
+                } else if (key == "e") {
+                    for (p in split_patterns(value)) {
+                        opts.patterns.push(p);
+                    }
+                    pattern_given = true;
+                } else if (key == "A" or key == "B" or key == "C" or key == "NUM") {
+                    let n = context_length(value);
+                    if (n < 0) {
+                        return Err(ArgError(i"{$ value $}: invalid context length argument", false));
+                    }
+                    if (key == "A") {
+                        opts.after = n;
+                    } else if (key == "B") {
+                        opts.before = n;
+                    } else {
+                        context = n;
+                    }
+                } else {
+                    apply_flag(edits: opts, key);
+                }
+            },
         }
     }
 
-    return Ok(Options(
-        command = command,
-        operands = operands,
-        help = help,
-        version = version,
-        verbose = verbose,
-        shout = shout,
-        greeting = greeting,
-    ));
+    # -A and -B win over -C and -NUM, whatever their order.
+    if (opts.after < 0) {
+        opts.after = context;
+    }
+    if (opts.before < 0) {
+        opts.before = context;
+    }
+
+    if (opts.help or opts.version) {
+        return Ok(opts);
+    }
+    var first_file = 0;
+    if (!pattern_given) {
+        if (operands.len() == 0) {
+            return Err(ArgError("", true));
+        }
+        opts.patterns = split_patterns(operands[0]);
+        first_file = 1;
+    }
+    opts.files = operands.slice(first_file);
+    return Ok(opts);
 }

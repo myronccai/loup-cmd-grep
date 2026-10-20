@@ -1,0 +1,124 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from system.regex import (Regex);
+from cli.args import (Syntax);
+from commands.pattern import (translate, join_alternatives, escape_code, literal, other_case, parse_interval, BACKREF_MESSAGE);
+
+func bre(p: string): string {
+    return translate(p, Syntax.Basic, false).unwrap();
+}
+
+func ere(p: string): string {
+    return translate(p, Syntax.Extended, false).unwrap();
+}
+
+func bre_error(p: string): string {
+    return translate(p, Syntax.Basic, false).unwrap_err();
+}
+
+# Whether grep pattern `p` (in `syntax`) matches `text`, through system.regex.
+func hit(p: string, syntax: Syntax, icase: bool, text: string): bool {
+    return Regex(translate(p, syntax, icase).unwrap()).isMatch(text);
+}
+
+func test_escaping_of_literals(): void {
+    expectEq(escape_code(97), "a", "letter");
+    expectEq(escape_code(95), "_", "underscore stays bare");
+    expectEq(escape_code(46), "\\.", "punctuation");
+    expectEq(escape_code(32), "\\x{20}", "space");
+    expectEq(escape_code(233), "\\x{E9}", "e acute");
+    expectEq(literal(97, true), "[aA]", "icase letter");
+    expectEq(literal(49, true), "1", "icase digit");
+    expectEq(other_case(233), 201, "e acute to E acute");
+}
+
+func test_bre_operators(): void {
+    expectEq(bre("a.b*"), "a.b*", "dot and star");
+    expectEq(bre("a+b?"), "a\\+b\\?", "+ and ? are literal");
+    expectEq(bre("a\\+b\\?"), "a+b?", "GNU \\+ and \\?");
+    expectEq(bre("(x){y}|z"), "\\(x\\)\\{y\\}\\|z", "( ) { } | literal");
+    expectEq(bre("\\(ab\\)*"), "(?:ab)*", "group then star");
+    expectEq(bre("a\\|b"), "a|b", "alternation");
+    expectEq(bre("o\\{2,3\\}"), "o{2,3}", "interval");
+    expectEq(bre("o\\{,3\\}"), "o{0,3}", "open interval");
+    expectEq(bre("o\\{2,\\}"), "o{2,}", "unbounded");
+}
+
+func test_bre_anchors_and_leading_star(): void {
+    expectEq(bre("^a$"), "^a$", "anchors");
+    expectEq(bre("a^b$c"), "a\\^b\\$c", "literal in the middle");
+    expectEq(bre("\\(^a\\)"), "(?:^a)", "^ after \\(");
+    expectEq(bre("*a"), "\\*a", "leading star is literal");
+    expectEq(bre("^*"), "^\\*", "star after ^ is literal");
+}
+
+func test_ere_operators(): void {
+    expectEq(ere("(ab)+|c?"), "(?:ab)+|c?", "group, plus, alternation");
+    expectEq(ere("a\\+"), "a\\+", "escaped plus is literal");
+    expectEq(ere("a{1"), "a\\{1", "invalid interval is literal");
+    expectEq(ere("a)"), "a\\)", "unmatched ) is literal");
+    expectEq(ere("*a"), "a", "leading star is dropped");
+    expectEq(ere("a*?"), "(?:a*)?", "stacked quantifier stays greedy");
+}
+
+func test_brackets(): void {
+    expectEq(bre("[a-c]"), "[a-c]", "range");
+    expectEq(bre("[^]a]"), "[^\\]a]", "leading ] and negation");
+    expectEq(bre("[\\.]"), "[\\\\\\.]", "backslash is literal inside brackets");
+    expectEq(bre("[[:digit:]x]"), "[0-9x]", "class");
+    expectEq(bre("[a-]"), "[a\\-]", "trailing dash");
+    expectEq(translate("[a-c]", Syntax.Basic, true).unwrap(), "[a-cA-C]", "icase range");
+    expectEq(translate("[[:upper:]]", Syntax.Basic, true).unwrap(), "[A-Za-z]", "icase upper");
+}
+
+func test_escapes(): void {
+    expectEq(bre("\\<a\\>"), "\\ba\\b", "word edges");
+    expectEq(bre("\\w\\S"), "\\w\\S", "class escapes");
+    expectEq(bre("\\n\\d"), "nd", "other letters are literal");
+    expectEq(bre("\\."), "\\.", "escaped dot");
+}
+
+func test_fixed_strings(): void {
+    expectEq(translate("a.b*", Syntax.Fixed, false).unwrap(), "a\\.b\\*", "fixed");
+    expectEq(translate("Ab", Syntax.Fixed, true).unwrap(), "[Aa][bB]", "fixed icase");
+}
+
+func test_errors(): void {
+    expectEq(bre_error("a\\("), "Unmatched ( or \\(", "open group");
+    expectEq(translate("(a", Syntax.Extended, false).unwrap_err(), "Unmatched ( or \\(", "ERE open group");
+    expectEq(bre_error("a\\)"), "Unmatched ) or \\)", "close group");
+    expectEq(bre_error("[a"), "Unmatched [, [^, [:, [., or [=", "bracket");
+    expectEq(bre_error("a\\{1"), "Unmatched \\{", "interval");
+    expectEq(bre_error("a\\{x\\}"), "Invalid content of \\{\\}", "interval content");
+    expectEq(bre_error("a\\{3,1\\}"), "Invalid content of \\{\\}", "min > max");
+    expectEq(bre_error("a\\"), "Trailing backslash", "trailing backslash");
+    expectEq(bre_error("[[:foo:]]"), "Invalid character class name", "class name");
+    expectEq(bre_error("[:space:]"), "character class syntax is [[:space:]], not [:space:]", "outer brackets");
+    expectEq(bre_error("[z-a]"), "Invalid range end", "range");
+    expectEq(bre_error("\\(a\\)\\1"), BACKREF_MESSAGE, "back-reference");
+}
+
+func test_interval_parsing(): void {
+    expectEq(parse_interval([51]).len(), 2, "{3}");
+    expectEq(parse_interval([44, 51])[0], 0, "{,3}");
+    expectEq(parse_interval([51, 44])[1], -1, "{3,}");
+    expectEq(parse_interval([]).len(), 0, "{}");
+    expectEq(parse_interval([120]).len(), 0, "{x}");
+}
+
+func test_translations_match_like_grep(): void {
+    expect(hit("a\\{2\\}", Syntax.Basic, false, "xaay"), "BRE interval");
+    expect(!hit("^b", Syntax.Basic, false, "ab"), "anchor");
+    expect(hit("a^b", Syntax.Basic, false, "a^b"), "literal caret");
+    expect(hit("(x)", Syntax.Basic, false, "f(x)"), "literal parentheses");
+    expect(hit("fox|dog", Syntax.Extended, false, "hotdog"), "ERE alternation");
+    expect(hit("CAFÉ", Syntax.Basic, true, "un café"), "icase non-ASCII");
+    expect(hit("[[:space:]]x", Syntax.Basic, false, "a\tx"), "space class");
+    expect(!hit("[^[:alnum:]]", Syntax.Basic, false, "abc123"), "negated class");
+}
+
+func test_join_alternatives(): void {
+    expectEq(join_alternatives(["a"]), "a", "single");
+    expectEq(join_alternatives(["a", "b|c"]), "(?:a)|(?:b|c)", "wrapped");
+}

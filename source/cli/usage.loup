@@ -1,28 +1,59 @@
 @mode(host.dual)
 
-from appinfo import (APP_NAME, APP_VERSION, APP_SUMMARY);
-from cli.args import (DEFAULT_GREETING);
+from appinfo import (APP_NAME, APP_VERSION);
+
+pub const USAGE_LINE: string = "Usage: grep [OPTION]... PATTERNS [FILE]...";
+pub const TRY_LINE: string = "Try 'grep --help' for more information.";
 
 pub func usage(): string {
     let lines = [
-        i"usage: {$ APP_NAME $} [OPTIONS] COMMAND [ARGS...]",
+        USAGE_LINE,
+        "Search for PATTERNS in each FILE.",
+        "Example: grep -i 'hello world' menu.h main.c",
+        "PATTERNS can contain multiple patterns separated by newlines.",
         "",
-        APP_SUMMARY,
+        "Pattern selection and interpretation:",
+        "  -E, --extended-regexp     PATTERNS are extended regular expressions",
+        "  -F, --fixed-strings       PATTERNS are strings",
+        "  -G, --basic-regexp        PATTERNS are basic regular expressions",
+        "  -e, --regexp=PATTERNS     use PATTERNS for matching",
+        "  -i, --ignore-case         ignore case distinctions in patterns and data",
+        "      --no-ignore-case      do not ignore case distinctions (default)",
+        "  -w, --word-regexp         match only whole words",
+        "  -x, --line-regexp         match only whole lines",
         "",
-        "Commands:",
-        "  hello [NAME]          Print a greeting (NAME defaults to 'world')",
-        "  help                  Show this help",
+        "Miscellaneous:",
+        "  -s, --no-messages         suppress error messages",
+        "  -v, --invert-match        select non-matching lines",
+        "  -V, --version             display version information and exit",
+        "      --help                display this help text and exit",
         "",
-        "Options:",
-        i"  -g, --greeting TEXT   Greeting used by 'hello' (default: {$ DEFAULT_GREETING $})",
-        "      --shout           Print the greeting in upper case",
-        "  -v, --verbose         Print diagnostic messages to stderr",
-        "  -h, --help            Show this help and exit",
-        "  -V, --version         Show the version and exit",
+        "Output control:",
+        "  -n, --line-number         print line number with output lines",
+        "  -H, --with-filename       print file name with output lines",
+        "  -h, --no-filename         suppress the file name prefix on output",
+        "  -o, --only-matching       show only nonempty parts of lines that match",
+        "  -q, --quiet, --silent     suppress all normal output",
+        "  -r, --recursive           search the files under each directory",
+        "  -R, --dereference-recursive  same as -r",
+        "  -L, --files-without-match  print only names of FILEs with no selected lines",
+        "  -l, --files-with-matches  print only names of FILEs with selected lines",
+        "  -c, --count               print only a count of selected lines per FILE",
+        "",
+        "Context control:",
+        "  -B, --before-context=NUM  print NUM lines of leading context",
+        "  -A, --after-context=NUM   print NUM lines of trailing context",
+        "  -C, --context=NUM         print NUM lines of output context",
+        "  -NUM                      same as --context=NUM",
+        "",
+        "When FILE is '-', read standard input.  With no FILE, read '.' if",
+        "recursive, '-' otherwise.  With fewer than two FILEs, assume -h.",
+        "Exit status is 0 if any line is selected, 1 otherwise;",
+        "if any error occurs and -q is not given, the exit status is 2.",
     ];
     return lines.join("\n");
 }
 
 pub func version_line(): string {
-    return i"{$ APP_NAME $} {$ APP_VERSION $}";
+    return i"{$ APP_NAME $} (loup-cmd-{$ APP_NAME $}) {$ APP_VERSION $}";
 }

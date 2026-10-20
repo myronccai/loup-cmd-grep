@@ -1,0 +1,136 @@
+@mode(host.dual)
+
+# grep: compiles the patterns, walks the operands, searches each input and
+# prints the results. The only module that prints.
+
+from io.fs import (isDir, walk);
+from appinfo import (APP_NAME, EXIT_OK, EXIT_NO_MATCH, EXIT_TROUBLE);
+from cli.args import (Options, ListMode);
+from commands.matcher import (Matcher, build_matcher);
+from commands.search import (SearchConfig, search_lines);
+from commands.inputs import (STDIN_LABEL, split_lines, is_binary, child_path);
+
+# What has happened so far, across inputs.
+struct Totals {
+    pub var matched: bool;    # some input had a selected line
+    pub var trouble: bool;    # an error was reported
+    pub var printed: bool;    # some line or separator was printed
+}
+
+func complain(opts: Options, message: string): void {
+    if (!opts.no_messages) {
+        printErr(APP_NAME + ": " + message);
+    }
+}
+
+pub safe func config_for(opts: Options, show_name: bool): SearchConfig {
+    let names_only = opts.list_files != ListMode.Off;
+    let cfg = SearchConfig();
+    cfg.invert = opts.invert;
+    cfg.only_matching = opts.only_matching;
+    cfg.line_number = opts.line_number;
+    cfg.show_name = show_name;
+    cfg.before = opts.before;
+    cfg.after = opts.after;
+    cfg.print_lines = !(opts.quiet or names_only or opts.count);
+    cfg.stop_at_first = opts.quiet or names_only;
+    return cfg;
+}
+
+# Searches the file at `path` (`-` for standard input) and prints its
+# results. Returns true when grep can stop: -q and a selected line.
+func search_input(m: Matcher, opts: Options, path: string, label: string, show_name: bool, edits t: Totals): bool {
+    let data = if (path == "-") { readBytes("/dev/stdin") } else { readBytes(path) };
+    let binary = is_binary(data);
+    let lines = split_lines(data.decode());
+    let res = search_lines(m, config_for(opts, show_name), label, lines, binary, t.printed);
+    if (res.selected > 0) {
+        t.matched = true;
+    }
+    if (opts.quiet) {
+        return res.selected > 0;
+    }
+    if (opts.list_files == ListMode.Matching) {
+        if (res.selected > 0) {
+            println(label);
+        }
+    } else if (opts.list_files == ListMode.NonMatching) {
+        if (res.selected == 0) {
+            println(label);
+        }
+    } else if (opts.count) {
+        let name = if (show_name) { label + ":" } else { "" };
+        println(name + str(res.selected));
+    } else {
+        if (res.out.len() > 0) {
+            println(res.out.join("\n"));
+            t.printed = true;
+        }
+        if (res.binary) {
+            printErr(APP_NAME + ": " + label + ": binary file matches");
+        }
+    }
+    return false;
+}
+
+pub func run_grep(opts: Options): int {
+    let built = build_matcher(opts.patterns, opts.syntax, opts.ignore_case, opts.word, opts.whole_line);
+    if (built.is_err()) {
+        printErr(APP_NAME + ": " + built.unwrap_err());
+        return EXIT_TROUBLE;
+    }
+    let m = built.unwrap();
+
+    var operands = opts.files;
+    var implicit_dot = false;
+    if (operands.len() == 0) {
+        if (opts.recursive) {
+            operands = ["."];
+            implicit_dot = true;
+        } else {
+            operands = ["-"];
+        }
+    }
+    let many = opts.files.len() > 1;
+    var t = Totals(matched = false, trouble = false, printed = false);
+
+    for (operand in operands) {
+        if (operand == "-") {
+            let show = if (opts.with_filename >= 0) { opts.with_filename == 1 } else { many };
+            if (search_input(m, opts, "-", STDIN_LABEL, show, edits: t)) {
+                return EXIT_OK;
+            }
+            continue;
+        }
+        # Native builds cannot catch a failed read, so check first.
+        if (!exists(operand)) {
+            complain(opts, operand + ": No such file or directory");
+            t.trouble = true;
+            continue;
+        }
+        if (isDir(operand)) {
+            if (!opts.recursive) {
+                complain(opts, operand + ": Is a directory");
+                t.trouble = true;
+                continue;
+            }
+            let show = opts.with_filename != 0;
+            for (rel in walk(operand)) {
+                let path = if (implicit_dot) { rel } else { child_path(operand, rel) };
+                if (search_input(m, opts, path, path, show, edits: t)) {
+                    return EXIT_OK;
+                }
+            }
+            continue;
+        }
+        let show = if (opts.with_filename >= 0) { opts.with_filename == 1 } else { many };
+        if (search_input(m, opts, operand, operand, show, edits: t)) {
+            return EXIT_OK;
+        }
+    }
+
+    if (t.trouble) {
+        return EXIT_TROUBLE;
+    }
+    return if (t.matched) { EXIT_OK } else { EXIT_NO_MATCH };
+}

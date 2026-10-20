@@ -1,0 +1,100 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (Syntax);
+from commands.matcher import (Matcher, build_matcher);
+from commands.search import (SearchConfig, SearchResult, search_lines);
+
+func matcher(p: string): Matcher {
+    return build_matcher([p], Syntax.Extended, false, false, false).unwrap();
+}
+
+func numbers(n: int): list[string] {
+    var out: list[string] = [];
+    var i = 1;
+    while (i <= n) {
+        out.push(str(i));
+        i += 1;
+    }
+    return out;
+}
+
+func run(p: string, cfg: SearchConfig, lines: list[string]): string {
+    return search_lines(matcher(p), cfg, "f", lines, false, false).out.join("|");
+}
+
+func test_selected_lines_and_count(): void {
+    let res = search_lines(matcher("o"), SearchConfig(), "f", ["foo", "bar", "boo"], false, false);
+    expectEq(res.out.join("|"), "foo|boo", "lines");
+    expectEq(res.selected, 2, "count");
+    expect(!res.binary, "text");
+}
+
+func test_prefixes(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.show_name = true;
+        cfg.line_number = true;
+    }
+    expectEq(run("b", cfg, ["a", "b"]), "f:2:b", "name and number");
+}
+
+func test_invert(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.invert = true;
+    }
+    expectEq(run("o", cfg, ["foo", "bar"]), "bar", "-v");
+}
+
+func test_only_matching(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.only_matching = true;
+        cfg.line_number = true;
+    }
+    expectEq(run("o+", cfg, ["foo boo", "x"]), "1:oo|1:oo", "-o -n");
+}
+
+func test_context_and_separators(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.before = 1;
+        cfg.after = 1;
+        cfg.line_number = true;
+    }
+    expectEq(run("^(3|8)$", cfg, numbers(10)), "2-2|3:3|4-4|--|7-7|8:8|9-9", "two groups");
+    expectEq(run("^(3|5)$", cfg, numbers(10)), "2-2|3:3|4-4|5:5|6-6", "merged groups");
+    let first = search_lines(matcher("^1$"), cfg, "f", numbers(3), false, true);
+    expectEq(first.out.join("|"), "--|1:1|2-2", "separator after an earlier file");
+}
+
+func test_before_context_ring(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.before = 2;
+    }
+    expectEq(run("^6$", cfg, numbers(8)), "4|5|6", "two lines before");
+}
+
+func test_binary_input(): void {
+    let res = search_lines(matcher("o"), SearchConfig(), "f", ["foo", "boo"], true, false);
+    expect(res.binary, "binary match");
+    expectEq(res.out.len(), 0, "no lines printed");
+    let cfg = SearchConfig();
+    safe {
+        cfg.print_lines = false;
+    }
+    let counted = search_lines(matcher("o"), cfg, "f", ["foo", "boo"], true, false);
+    expectEq(counted.selected, 2, "-c counts binary lines");
+}
+
+func test_stop_at_first(): void {
+    let cfg = SearchConfig();
+    safe {
+        cfg.print_lines = false;
+        cfg.stop_at_first = true;
+    }
+    let res = search_lines(matcher("o"), cfg, "f", ["foo", "boo"], false, false);
+    expectEq(res.selected, 1, "stops after one");
+}

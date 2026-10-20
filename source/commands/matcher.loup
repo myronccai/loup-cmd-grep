@@ -1,0 +1,102 @@
+@mode(host.dual)
+
+# The compiled patterns: which lines match, and which parts of a line -o
+# prints. See "Matcher" in specs/grep/design.md.
+
+from system.regex import (Regex);
+from cli.args import (Syntax);
+from commands.pattern import (translate, join_alternatives);
+
+pub class Matcher {
+    let line_re: Regex;     # tests a whole line
+    let parts_re: Regex;    # findAll for -o (plain and -x)
+    let word_first: Regex;  # -o -w: the first whole-word match from offset 0
+    let word_next: Regex;   # -o -w: the same from offset k > 0
+    let word: bool;
+
+    new(line_re: Regex, parts_re: Regex, word_first: Regex, word_next: Regex, word: bool) {
+        this.line_re = line_re;
+        this.parts_re = parts_re;
+        this.word_first = word_first;
+        this.word_next = word_next;
+        this.word = word;
+    }
+
+    # Whether the patterns match `line` (before -v is applied).
+    pub func selects(line: string): bool {
+        return this.line_re.isMatch(line);
+    }
+
+    # The non-empty, non-overlapping matches in `line`, left to right.
+    pub func matches(line: string): list[string] {
+        var out: list[string] = [];
+        if (!this.word) {
+            for (m in this.parts_re.findAll(line)) {
+                if (m.value.len() > 0) {
+                    out.push(m.value);
+                }
+            }
+            return out;
+        }
+        # system.regex cannot start a search at an offset, so search from
+        # offset k in line.substring(k - 1): one character of left context
+        # keeps \W, \b and ^ true to the whole line.
+        let n = line.len();
+        var k = 0;
+        while (k <= n) {
+            let found = if (k == 0) { this.word_first.findFirst(line) } else { this.word_next.findFirst(line.substring(k - 1, n)) };
+            if (found.is_none()) {
+                break;
+            }
+            let m = found.unwrap();
+            let lead = m.groupByIndex(1) ?? "";
+            let text = m.groupByIndex(2) ?? "";
+            let start = (if (k == 0) { 0 } else { k - 1 }) + lead.len();
+            if (text.len() > 0) {
+                out.push(text);
+                k = start + text.len();
+            } else {
+                k = start + 1;
+            }
+        }
+        return out;
+    }
+}
+
+func compile(source: string): Result[Regex, string] {
+    return Regex.compile(source);
+}
+
+# Translates and compiles the patterns. Err carries GNU's message for an
+# invalid pattern.
+pub func build_matcher(patterns: list[string], syntax: Syntax, icase: bool, word: bool, whole_line: bool): Result[Matcher, string] {
+    var parts: list[string] = [];
+    for (p in patterns) {
+        let t = translate(p, syntax, icase);
+        if (t.is_err()) {
+            return Err(t.unwrap_err());
+        }
+        parts.push(t.unwrap());
+    }
+    let joined = join_alternatives(parts);
+    let use_word = word and !whole_line;
+
+    var line_src = "(?:" + joined + ")";
+    if (whole_line) {
+        line_src = "^(?:" + joined + ")$";
+    } else if (use_word) {
+        line_src = "(?:^|\\W)(?:" + joined + ")(?:\\W|$)";
+    }
+    let parts_src = if (whole_line) { line_src } else { "(?:" + joined + ")" };
+    let first_src = if (use_word) { "^(.*?\\W)??(" + joined + ")(?:\\W|$)" } else { "" };
+    let next_src = if (use_word) { "^(.*?\\W)(" + joined + ")(?:\\W|$)" } else { "" };
+
+    let line_re = compile(line_src);
+    let parts_re = compile(parts_src);
+    let first_re = compile(first_src);
+    let next_re = compile(next_src);
+    if (line_re.is_err() or parts_re.is_err() or first_re.is_err() or next_re.is_err()) {
+        return Err("internal error: cannot compile the translated pattern " + line_src);
+    }
+    return Ok(Matcher(line_re.unwrap(), parts_re.unwrap(), first_re.unwrap(), next_re.unwrap(), use_word));
+}

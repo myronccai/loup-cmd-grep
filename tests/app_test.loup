@@ -1,25 +1,26 @@
 @mode(host.dual)
 
 # Exit statuses of the whole command line. These tests print the program's
-# normal output and error messages.
+# normal output and messages.
 
 from debug.assert import (expectEq);
-from appinfo import (EXIT_OK, EXIT_USAGE);
+from appinfo import (EXIT_OK, EXIT_NO_MATCH, EXIT_TROUBLE);
 from cli.app import (run);
 
-func test_version_succeeds(): void {
+func test_version_and_help_succeed(): void {
     expectEq(run(["--version"]), EXIT_OK, "--version");
+    expectEq(run(["--help"]), EXIT_OK, "--help");
 }
 
-func test_hello_succeeds(): void {
-    expectEq(run(["hello", "tests"]), EXIT_OK, "hello NAME");
+func test_match_and_no_match(): void {
+    expectEq(run(["-q", "Loup", "README.md"]), EXIT_OK, "match");
+    expectEq(run(["-q", "no such text anywhere 4c7e", "README.md"]), EXIT_NO_MATCH, "no match");
 }
 
-func test_unknown_command_is_usage_error(): void {
-    expectEq(run(["bogus"]), EXIT_USAGE, "unknown command");
-}
-
-func test_missing_command_is_usage_error(): void {
+func test_errors_give_status_2(): void {
     let none: list[string] = [];
-    expectEq(run(none), EXIT_USAGE, "no command");
+    expectEq(run(none), EXIT_TROUBLE, "no pattern");
+    expectEq(run(["-k", "x"]), EXIT_TROUBLE, "bad option");
+    expectEq(run(["a\\(", "README.md"]), EXIT_TROUBLE, "bad pattern");
+    expectEq(run(["-s", "x", "tests/no-such-file"]), EXIT_TROUBLE, "missing file");
 }

@@ -1,0 +1,115 @@
+@mode(host.dual)
+
+# The search of one input: which lines are selected and what is printed for
+# them, including -o parts, context lines and `--` separators. Pure: the
+# output comes back as a list of lines.
+
+from commands.matcher import (Matcher);
+from commands.context import (ContextRing);
+
+# How to search and what to print. Classes rather than structs: both cross
+# module boundaries (see AGENTS.md).
+pub class SearchConfig {
+    pub var invert: bool = false;
+    pub var only_matching: bool = false;
+    pub var line_number: bool = false;
+    pub var show_name: bool = false;
+    pub var before: int = 0;
+    pub var after: int = 0;
+    pub var print_lines: bool = true;     # false for -c, -l, -L and -q
+    pub var stop_at_first: bool = false;  # -q, -l and -L only need one selected line
+}
+
+pub class SearchResult {
+    pub let out: list[string];   # output lines, without newlines
+    pub let selected: int;       # number of selected lines
+    pub let binary: bool;        # a binary input had a selected line (nothing printed)
+
+    new(out: list[string], selected: int, binary: bool) {
+        this.out = out;
+        this.selected = selected;
+        this.binary = binary;
+    }
+}
+
+# The prefix of an output line: file name and line number (0-based `index`),
+# each followed by `sep` (`:` for selected lines, `-` for context lines).
+pub func prefix(cfg: SearchConfig, label: string, index: int, sep: string): string {
+    var out = "";
+    if (cfg.show_name) {
+        out += label + sep;
+    }
+    if (cfg.line_number) {
+        out += str(index + 1) + sep;
+    }
+    return out;
+}
+
+# Searches `lines`. `printed_before` says whether earlier inputs printed
+# anything, so that a separator also goes between files.
+pub func search_lines(m: Matcher, cfg: SearchConfig, label: string, lines: list[string], binary: bool, printed_before: bool): SearchResult {
+    var out: list[string] = [];
+    var selected = 0;
+    let ring = ContextRing(cfg.before);
+    var after_left = 0;
+    var last_out = -1;
+    var any_out = printed_before;
+    let context = cfg.before > 0 or cfg.after > 0;
+
+    var i = 0;
+    while (i < lines.len()) {
+        let line = lines[i];
+        let hit = m.selects(line) != cfg.invert;
+        if (hit) {
+            selected += 1;
+            if (cfg.stop_at_first) {
+                break;
+            }
+            if (!cfg.print_lines) {
+                i += 1;
+                continue;
+            }
+            if (binary) {
+                return SearchResult(out, selected, true);
+            }
+            let first = i - ring.size;
+            if (context and any_out and (last_out < 0 or first > last_out + 1)) {
+                out.push("--");
+            }
+            if (!cfg.only_matching) {
+                var r = 0;
+                while (r < ring.size) {
+                    out.push(prefix(cfg, label, ring.number_at(r), "-") + ring.text_at(r));
+                    r += 1;
+                }
+            }
+            safe {
+                ring.clear();
+            }
+            if (!cfg.only_matching) {
+                out.push(prefix(cfg, label, i, ":") + line);
+            } else if (!cfg.invert) {
+                for (part in m.matches(line)) {
+                    out.push(prefix(cfg, label, i, ":") + part);
+                }
+            }
+            last_out = i;
+            any_out = true;
+            after_left = cfg.after;
+        } else if (cfg.print_lines and !binary) {
+            if (after_left > 0) {
+                if (!cfg.only_matching) {
+                    out.push(prefix(cfg, label, i, "-") + line);
+                }
+                last_out = i;
+                after_left -= 1;
+            } else if (cfg.before > 0) {
+                safe {
+                    ring.push(i, line);
+                }
+            }
+        }
+        i += 1;
+    }
+    return SearchResult(out, selected, false);
+}

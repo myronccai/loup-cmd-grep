@@ -1,0 +1,36 @@
+@mode(host.dual)
+
+from debug.assert import (expectEq);
+from commands.context import (ContextRing);
+
+func test_keeps_the_newest_lines(): void {
+    let r = ContextRing(2);
+    safe {
+        r.push(0, "a");
+        r.push(1, "b");
+        r.push(2, "c");
+    }
+    expectEq(r.size, 2, "capacity");
+    expectEq(r.number_at(0), 1, "oldest kept");
+    expectEq(r.text_at(0), "b", "oldest text");
+    expectEq(r.text_at(1), "c", "newest text");
+}
+
+func test_clear(): void {
+    let r = ContextRing(3);
+    safe {
+        r.push(4, "x");
+        r.clear();
+        r.push(5, "y");
+    }
+    expectEq(r.size, 1, "one after clear");
+    expectEq(r.number_at(0), 5, "new entry");
+}
+
+func test_zero_capacity_holds_nothing(): void {
+    let r = ContextRing(0);
+    safe {
+        r.push(0, "a");
+    }
+    expectEq(r.size, 0, "empty");
+}

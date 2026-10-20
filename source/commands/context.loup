@@ -1,0 +1,53 @@
+@mode(host.dual)
+
+# A ring buffer of the most recent lines that have not been printed, for
+# -B (before-context). It holds at most `capacity` lines; pushing into a
+# full ring overwrites the oldest one.
+
+pub class ContextRing {
+    let capacity: int;
+    var numbers: list[int] = [];
+    var texts: list[string] = [];
+    var head: int = 0;
+    pub var size: int = 0;
+
+    new(capacity: int) {
+        this.capacity = capacity;
+        var i = 0;
+        while (i < capacity) {
+            this.numbers.push(0);
+            this.texts.push("");
+            i += 1;
+        }
+    }
+
+    # Adds line `number` (0-based) with its text.
+    pub modifier func push(number: int, text: string): void {
+        if (this.capacity == 0) {
+            return;
+        }
+        let slot = (this.head + this.size) % this.capacity;
+        this.numbers[slot] = number;
+        this.texts[slot] = text;
+        if (this.size < this.capacity) {
+            this.size += 1;
+        } else {
+            this.head = (this.head + 1) % this.capacity;
+        }
+    }
+
+    # The line number of the i-th oldest entry.
+    pub func number_at(i: int): int {
+        return this.numbers[(this.head + i) % this.capacity];
+    }
+
+    # The text of the i-th oldest entry.
+    pub func text_at(i: int): string {
+        return this.texts[(this.head + i) % this.capacity];
+    }
+
+    pub modifier func clear(): void {
+        this.head = 0;
+        this.size = 0;
+    }
+}

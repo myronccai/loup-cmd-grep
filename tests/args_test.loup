@@ -1,64 +1,115 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (Options, ArgError, Syntax, ListMode, parse_args, tokenize, find_long, split_patterns, context_length);
 
-func test_no_arguments(): void {
+func ok(argv: list[string]): Options {
+    return parse_args(argv).unwrap();
+}
+
+func error_of(argv: list[string]): ArgError {
+    return parse_args(argv).unwrap_err();
+}
+
+func test_pattern_then_files(): void {
+    let o = ok(["foo", "a.txt", "b.txt"]);
+    expectEq(o.patterns.len(), 1, "one pattern");
+    expectEq(o.patterns[0], "foo", "pattern");
+    expectEq(o.files.len(), 2, "two files");
+    expect(o.syntax == Syntax.Basic, "BRE by default");
+    expectEq(o.before, 0, "no context");
+}
+
+func test_e_options_make_every_operand_a_file(): void {
+    let o = ok(["-e", "a", "--regexp=b", "-ec", "x.txt"]);
+    expectEq(o.patterns.join(","), "a,b,c", "three patterns");
+    expectEq(o.files.len(), 1, "one file");
+    expectEq(o.files[0], "x.txt", "file");
+}
+
+func test_newlines_split_patterns(): void {
+    expectEq(split_patterns("a\nb").len(), 2, "two");
+    expectEq(split_patterns("").len(), 1, "an empty pattern");
+    expectEq(split_patterns("a\n").len(), 2, "trailing newline adds an empty pattern");
+    expectEq(ok(["fox\ndog", "f"]).patterns.len(), 2, "operand split");
+}
+
+func test_clusters_and_permutation(): void {
+    let o = ok(["foo", "f.txt", "-inr", "-A2"]);
+    expect(o.ignore_case and o.line_number and o.recursive, "-inr after the operands");
+    expectEq(o.after, 2, "-A2");
+    expectEq(o.before, 0, "-B unset");
+    expectEq(o.files[0], "f.txt", "file kept");
+}
+
+func test_double_dash_and_lone_dash(): void {
+    let o = ok(["-n", "--", "-v", "-"]);
+    expect(!o.invert, "-v after -- is the pattern");
+    expectEq(o.patterns[0], "-v", "pattern");
+    expectEq(o.files[0], "-", "stdin operand");
+}
+
+func test_context_options(): void {
+    let o = ok(["-C", "3", "-A", "1", "x"]);
+    expectEq(o.after, 1, "-A wins over -C");
+    expectEq(o.before, 3, "-B from -C");
+    let n = ok(["-5", "x"]);
+    expectEq(n.before, 5, "-NUM");
+    expectEq(ok(["-15n", "x"]).after, 15, "digits run");
+    expectEq(context_length("12"), 12, "12");
+    expectEq(context_length("-1"), -1, "negative");
+    expectEq(context_length("x"), -1, "not a number");
+    expectEq(context_length(""), -1, "empty");
+}
+
+func test_last_of_l_and_L_and_h_and_H_wins(): void {
+    expect(ok(["-l", "-L", "x"]).list_files == ListMode.NonMatching, "-l -L");
+    expect(ok(["-L", "-l", "x"]).list_files == ListMode.Matching, "-L -l");
+    expectEq(ok(["-H", "-h", "x"]).with_filename, 0, "-H -h");
+    expectEq(ok(["-h", "-H", "x"]).with_filename, 1, "-h -H");
+}
+
+func test_matchers(): void {
+    expect(ok(["-E", "x"]).syntax == Syntax.Extended, "-E");
+    expect(ok(["-F", "-F", "x"]).syntax == Syntax.Fixed, "-F twice");
+    let e = error_of(["-E", "-F", "x"]);
+    expectEq(e.message, "conflicting matchers specified", "conflict");
+    expect(!e.usage, "no usage lines");
+}
+
+func test_long_option_prefixes(): void {
+    expectEq(find_long("count").len(), 1, "exact");
+    expectEq(find_long("ext").len(), 1, "unique prefix");
+    expectEq(find_long("files-with").len(), 2, "ambiguous");
+    expectEq(find_long("nothing").len(), 0, "unknown");
+    expect(ok(["--ext", "x"]).syntax == Syntax.Extended, "--ext");
+    expectEq(ok(["--context=2", "x"]).before, 2, "--context=2");
+    expectEq(ok(["--after-context", "4", "x"]).after, 4, "separate value");
+}
+
+func test_usage_errors(): void {
     let none: list[string] = [];
-    let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
-    expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+    let bare = error_of(none);
+    expectEq(bare.message, "", "no pattern");
+    expect(bare.usage, "usage lines");
+    expectEq(error_of(["-k", "x"]).message, "invalid option -- 'k'", "-k");
+    expectEq(error_of(["--foo=1", "x"]).message, "unrecognized option '--foo=1'", "--foo");
+    expectEq(error_of(["-A"]).message, "option requires an argument -- 'A'", "-A");
+    expectEq(error_of(["--context"]).message, "option '--context' requires an argument", "--context");
+    expectEq(error_of(["--count=3", "x"]).message, "option '--count' doesn't allow an argument", "--count=3");
+    expectEq(error_of(["--co", "x"]).message, "option '--co' is ambiguous; possibilities: '--count' '--context'", "--co");
+    let bad = error_of(["-A", "x", "y"]);
+    expectEq(bad.message, "x: invalid context length argument", "context");
+    expect(!bad.usage, "no usage lines");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_help_and_version_need_no_pattern(): void {
+    expect(ok(["--help"]).help, "--help");
+    expect(ok(["-V"]).version, "-V");
+    expect(ok(["--vers"]).version, "--vers");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
-}
-
-func test_help_and_version(): void {
-    expect(parse_args(["--help"]).unwrap().help, "--help");
-    expect(parse_args(["-h"]).unwrap().help, "-h");
-    expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
-}
-
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
-}
-
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
-}
-
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
-}
-
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
-}
-
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
-}
-
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
+func test_tokenize_stops_at_first_error(): void {
+    let toks = tokenize(["-n", "-k", "-v"]);
+    expectEq(toks.len(), 2, "-n, then the bad -k");
 }

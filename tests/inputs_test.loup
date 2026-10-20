@@ -1,0 +1,27 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from commands.inputs import (split_lines, is_binary, child_path);
+
+func test_split_lines(): void {
+    expectEq(split_lines("").len(), 0, "empty input has no lines");
+    expectEq(split_lines("a\nb\n").len(), 2, "final newline");
+    expectEq(split_lines("a\nb").len(), 2, "no final newline");
+    expectEq(split_lines("\n").len(), 1, "one empty line");
+    expectEq(split_lines("a\n\nb\n")[1], "", "empty line kept");
+}
+
+func test_binary_detection(): void {
+    expect(!is_binary(b"plain text\n"), "ASCII");
+    expect(!is_binary(b"caf\xc3\xa9 \xe2\x82\xac \xf0\x9f\x98\x80"), "valid UTF-8");
+    expect(is_binary(b"a\x00b"), "NUL byte");
+    expect(is_binary(b"caf\xe9"), "Latin-1");
+    expect(is_binary(b"\xc3"), "truncated sequence");
+    expect(is_binary(b"\xc0\xaf"), "overlong");
+    expect(is_binary(b"\xed\xa0\x80"), "surrogate");
+}
+
+func test_child_path(): void {
+    expectEq(child_path("d", "x.txt"), "d/x.txt", "joined");
+    expectEq(child_path("d/", "x.txt"), "d/x.txt", "no double slash");
+}
