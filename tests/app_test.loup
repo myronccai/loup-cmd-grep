@@ -13,14 +13,14 @@ func test_version_and_help_succeed(): void {
 }
 
 func test_match_and_no_match(): void {
-    expectEq(run(["-q", "Loup", "README.md"]), EXIT_OK, "match");
-    expectEq(run(["-q", "no such text anywhere 4c7e", "README.md"]), EXIT_NO_MATCH, "no match");
+    expectEq(run(["-q", "fox", "tests/fixtures/poem.txt"]), EXIT_OK, "match");
+    expectEq(run(["-q", "zebra", "tests/fixtures/poem.txt"]), EXIT_NO_MATCH, "no match");
 }
 
 func test_errors_give_status_2(): void {
     let none: list[string] = [];
     expectEq(run(none), EXIT_TROUBLE, "no pattern");
     expectEq(run(["-k", "x"]), EXIT_TROUBLE, "bad option");
-    expectEq(run(["a\\(", "README.md"]), EXIT_TROUBLE, "bad pattern");
+    expectEq(run(["a\\(", "tests/fixtures/poem.txt"]), EXIT_TROUBLE, "bad pattern");
     expectEq(run(["-s", "x", "tests/no-such-file"]), EXIT_TROUBLE, "missing file");
 }
