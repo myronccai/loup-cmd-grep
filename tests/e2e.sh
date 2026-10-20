@@ -131,7 +131,9 @@ check "-r single file"     0 $'foo in a\n'                        -r foo tree/a.
 check "-rc"                0 $'tree/a.txt:1\ntree/sub/b.txt:0\ntree/sub/deeper/c.txt:2\n'   -rc foo tree
 check "-rL"                0 $'tree/sub/b.txt\n'                  -rL foo tree
 check "-rh"                0 $'foo in a\n'                        -rh 'in a' tree
-(cd tree && check "-r no operand" 0 $'a.txt:2:foo in a\nsub/deeper/c.txt:1:deep foo\nsub/deeper/c.txt:2:foo again\n'   -rn foo)
+cd tree || exit 1
+check "-r no operand"      0 $'a.txt:2:foo in a\nsub/deeper/c.txt:1:deep foo\nsub/deeper/c.txt:2:foo again\n'   -rn foo
+cd "$FIX" || exit 1
 
 printf 'text\0with nul foo\n' > "$TMP/bin.dat"
 printf 'caf\351 foo\n' > "$TMP/latin1.txt"
