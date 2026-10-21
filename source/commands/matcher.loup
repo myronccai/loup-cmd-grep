@@ -100,12 +100,16 @@ pub func build_matcher(patterns: list[string], syntax: Syntax, icase: bool, word
     let first_src = if (use_word) { "^(.*?\\W)??(" + joined + ")(?:\\W|$)" } else { "" };
     let next_src = if (use_word) { "^(.*?\\W)(" + joined + ")(?:\\W|$)" } else { "" };
 
-    let line_re = compile(line_src);
-    let parts_re = compile(parts_src);
-    let first_re = compile(first_src);
-    let next_re = compile(next_src);
-    if (line_re.is_err() or parts_re.is_err() or first_re.is_err() or next_re.is_err()) {
+    # The four regexes are compiled in one try: `attempt` takes the value
+    # of an Ok and jumps to `catch Err` at the first Err. A failure means
+    # the translator wrote something system.regex rejects, a bug here.
+    try {
+        let line_re = attempt compile(line_src);
+        let parts_re = attempt compile(parts_src);
+        let first_re = attempt compile(first_src);
+        let next_re = attempt compile(next_src);
+        return Ok(Matcher(line_re, parts_re, first_re, next_re, use_word));
+    } catch Err(e) {
         return Err("internal error: cannot compile the translated pattern " + line_src);
     }
-    return Ok(Matcher(line_re.unwrap(), parts_re.unwrap(), first_re.unwrap(), next_re.unwrap(), use_word));
 }

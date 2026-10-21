@@ -8,10 +8,13 @@
 # file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
 # per `func test_*()`. It is not part of the binary.
 
-from debug.assert import (expect, expectEq);
+from debug.assert import (expect, expectEq, expectThrows);
 from system.regex import (Regex);
 from cli.args import (Syntax);
-from commands.pattern import (translate, join_alternatives, escape_code, literal, other_case, parse_interval, BACKREF_MESSAGE);
+from commands.pattern import (
+    PatternError, translate, translate_regex, join_alternatives, escape_code, literal, other_case,
+    parse_interval, BACKREF_MESSAGE,
+);
 
 func bre(p: string): string {
     return translate(p, Syntax.Basic, false).unwrap();
@@ -129,4 +132,26 @@ func test_translations_match_like_grep(): void {
 func test_join_alternatives(): void {
     expectEq(join_alternatives(["a"]), "a", "single");
     expectEq(join_alternatives(["a", "b|c"]), "(?:a)|(?:b|c)", "wrapped");
+}
+
+func test_translate_regex_throws_pattern_errors(): void {
+    let e = expectThrows(func(): void { translate_regex("ab\\{1", false, false); }, "unmatched \\{");
+    expectEq(e.message, "Unmatched \\{", "message");
+    expectEq(translate_regex("a\\{2\\}", false, false), "a{2}", "no error, no throw");
+}
+
+func test_pattern_error_offset(): void {
+    var offset = -1;
+    try {
+        translate_regex("a[b", true, false);
+    } catch (PatternError as e) {
+        offset = e.offset;
+    }
+    expectEq(offset, 3, "the scan reached the end looking for ]");
+    try {
+        translate_regex("ab\\{1", false, false);
+    } catch (PatternError as e) {
+        offset = e.offset;
+    }
+    expectEq(offset, 4, "just after \\{");
 }

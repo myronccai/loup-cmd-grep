@@ -9,17 +9,31 @@
 # Runtime: host.dual. Compiled into the native binary build/grep by `make
 # build`; `loup run source/main.loup` interprets the same code.
 #
-# Structure: code point and case helpers (escape_code, other_case,
-# literal); bracket helpers (class_ranges, range_member) and
+# Structure: PatternError; code point and case helpers (escape_code,
+# other_case, literal); bracket helpers (class_ranges, range_member) and
 # parse_interval; then the Translator, a one-pass scanner that appends
 # translated pieces with a kind per piece, so that a later `*`, `{m,n}`,
-# `^` or `)` can see what precedes it; and last translate and
-# join_alternatives, the entry points.
+# `^` or `)` can see what precedes it, and throws a PatternError at the
+# first error; last the entry points: translate_regex (throws), translate
+# (returns a Result) and join_alternatives.
 
 from cli.args import (Syntax);
 
 pub const BACKREF_MESSAGE: string = "back-references (\\1 to \\9) are not supported";
 const BRACKET_MESSAGE: string = "Unmatched [, [^, [:, [., or [=";
+
+## A pattern GNU grep rejects: its message, and the code point offset in
+## the pattern where the scan stopped. Thrown by the Translator and caught
+## by translate, in this module: natively, a custom exception thrown from
+## another module than the one declaring it is not caught.
+pub class PatternError : Exception {
+    pub let offset: int;
+
+    new(message: string, offset: int) {
+        super(message);
+        this.offset = offset;
+    }
+}
 
 # Kinds of translated pieces, used to decide what a quantifier or an anchor
 # character means at that point.
@@ -230,7 +244,6 @@ class Translator {
     var pieces: list[string] = [];
     var kinds: list[int] = [];
     var opens: list[int] = [];
-    pub var err: string = "";
 
     new(pattern: string, ere: bool, icase: bool) {
         this.codes = code_points(pattern);
@@ -263,10 +276,9 @@ class Translator {
         this.kinds.push(kind);
     }
 
-    modifier func fail(message: string): void {
-        if (this.err == "") {
-            this.err = message;
-        }
+    # Stops the translation: the first error is the one GNU reports.
+    func fail(message: string): void {
+        throw PatternError(message, this.pos);
     }
 
     func can_repeat(): bool {
@@ -323,11 +335,9 @@ class Translator {
         let hi = bounds[1];
         if (lo > 32767 or hi > 32767) {
             this.fail("Regular expression too big");
-            return;
         }
         if (hi >= 0 and lo > hi) {
             this.fail("Invalid content of \\{\\}");
-            return;
         }
         var q = "{" + str(lo);
         if (hi < 0) {
@@ -381,16 +391,13 @@ class Translator {
         let content = this.interval_content();
         if (content.len() == 1 and content[0] == -1) {
             this.fail("Unmatched \\{");
-            return;
         }
         let bounds = parse_interval(content);
         if (bounds.len() == 0) {
             this.fail("Invalid content of \\{\\}");
-            return;
         }
         if (!this.can_repeat()) {
             this.fail("Invalid preceding regular expression");
-            return;
         }
         this.interval(bounds);
     }
@@ -421,7 +428,6 @@ class Translator {
     modifier func backslash(): void {
         if (this.at_end()) {
             this.fail("Trailing backslash");
-            return;
         }
         # A BRE spells its operators with a backslash: \( \) \| \{ \+ \?.
         # Back-references \1 to \9 are refused. GNU's word and buffer
@@ -474,7 +480,6 @@ class Translator {
         while (true) {
             if (this.at_end()) {
                 this.fail(BRACKET_MESSAGE);
-                return;
             }
             let c = this.codes[this.pos];
             if (c == 93 and !first) {
@@ -498,7 +503,6 @@ class Translator {
                 }
                 if (!closed) {
                     this.fail(BRACKET_MESSAGE);
-                    return;
                 }
                 this.pos = i + 2;
                 if (kind == 58) {
@@ -509,18 +513,15 @@ class Translator {
                     let ranges = class_ranges(text, this.icase);
                     if (ranges.len() == 0) {
                         this.fail("Invalid character class name");
-                        return;
                     }
-                    var r = 0;
-                    while (r < ranges.len()) {
+                    # `ranges` holds lo, hi pairs: step two at a time.
+                    for (var r = 0; r < ranges.len(); r = r + 2) {
                         members += range_text(ranges[r], ranges[r + 1]);
-                        r += 2;
                     }
                     continue;
                 }
                 if (name.len() != 1) {
                     this.fail("Invalid collation character");
-                    return;
                 }
                 lo = name[0];
             } else {
@@ -532,7 +533,6 @@ class Translator {
                 this.pos += 2;
                 if (hi < lo) {
                     this.fail("Invalid range end");
-                    return;
                 }
                 members += range_member(lo, hi, this.icase);
             } else {
@@ -544,15 +544,15 @@ class Translator {
         # GNU rejects [:space:] written without the outer brackets.
         if (!negate and content_end - start >= 3 and this.codes[start] == 58 and this.codes[content_end - 1] == 58) {
             this.fail("character class syntax is [[:space:]], not [:space:]");
-            return;
         }
         let neg = if (negate) { "^" } else { "" };
         this.add("[" + neg + members + "]", ATOM);
     }
 
-    # The scan stops at the first error; `err` then holds GNU's message.
+    # The scan stops at the first error, which fail() throws as a
+    # PatternError.
     pub modifier func run(): string {
-        while (this.err == "" and !this.at_end()) {
+        while (!this.at_end()) {
             let c = this.codes[this.pos];
             this.pos += 1;
             if (c == 92) {
@@ -581,14 +581,25 @@ class Translator {
                 this.add(literal(c, this.icase), ATOM);
             }
         }
-        if (this.err == "" and this.opens.len() > 0) {
+        if (this.opens.len() > 0) {
             this.fail("Unmatched ( or \\(");
         }
         return this.pieces.join("");
     }
 }
 
-# One grep pattern in system.regex syntax, or GNU's error message.
+## One BRE (or, with `ere`, ERE) in system.regex syntax. Throws a
+## PatternError for a pattern GNU grep rejects.
+pub func translate_regex(pattern: string, ere: bool, icase: bool): string {
+    let t = Translator(pattern, ere, icase);
+    var out = "";
+    safe {
+        out = t.run();
+    }
+    return out;
+}
+
+## One grep pattern in system.regex syntax, or GNU's error message.
 pub func translate(pattern: string, syntax: Syntax, icase: bool): Result[string, string] {
     if (syntax == Syntax.Fixed) {
         var out = "";
@@ -597,15 +608,11 @@ pub func translate(pattern: string, syntax: Syntax, icase: bool): Result[string,
         }
         return Ok(out);
     }
-    let t = Translator(pattern, syntax == Syntax.Extended, icase);
-    var out = "";
-    safe {
-        out = t.run();
+    try {
+        return Ok(translate_regex(pattern, syntax == Syntax.Extended, icase));
+    } catch (PatternError as e) {
+        return Err(e.message);
     }
-    if (t.err != "") {
-        return Err(t.err);
-    }
-    return Ok(out);
 }
 
 # Several translated patterns as one alternation.

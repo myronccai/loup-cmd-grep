@@ -16,11 +16,9 @@ pub class ContextRing {
 
     new(capacity: int) {
         this.capacity = capacity;
-        var i = 0;
-        while (i < capacity) {
+        for (_ in 0..capacity) {
             this.numbers.push(0);
             this.texts.push("");
-            i += 1;
         }
     }
 
