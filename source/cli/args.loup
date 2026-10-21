@@ -11,6 +11,9 @@
 #
 # Parsing happens in two steps: `tokenize` turns argv into a list of `Arg`
 # values, and `parse_args` folds them into `Options`.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 pub enum Syntax {
     Basic,
@@ -234,6 +237,7 @@ pub func tokenize(argv: list[string]): list[Arg] {
         while (j < chars.len()) {
             let c = chars[j];
             j += 1;
+            # Digits in a cluster form one -NUM context length (`-5`, `-n12`).
             if (DIGITS.index_of(c) >= 0) {
                 digits += c;
                 if (j >= chars.len() or DIGITS.index_of(chars[j]) < 0) {

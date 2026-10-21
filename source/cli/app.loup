@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# Top level of grep: parse the arguments (a usage error gets GNU's Usage
+# and Try lines), handle --version and --help, run the search and turn the
+# outcome into grep's exit status: 0 selected, 1 none, 2 trouble.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code, and the unit
+# tests call run() directly.
+
 from appinfo import (APP_NAME, EXIT_OK, EXIT_TROUBLE);
 from cli.args import (parse_args);
 from cli.usage import (usage, version_line, USAGE_LINE, TRY_LINE);

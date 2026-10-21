@@ -3,6 +3,9 @@
 # The search of one input: which lines are selected and what is printed for
 # them, including -o parts, context lines and `--` separators. Pure: the
 # output comes back as a list of lines.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 from commands.matcher import (Matcher);
 from commands.context import (ContextRing);
@@ -56,6 +59,10 @@ pub func search_lines(m: Matcher, cfg: SearchConfig, label: string, lines: list[
     var any_out = printed_before;
     let context = cfg.before > 0 or cfg.after > 0;
 
+    # Context state: `ring` holds unprinted lines that may become -B
+    # context, `after_left` counts the -A lines still due, and `last_out`
+    # is the last line printed, so that a `--` goes wherever printed lines
+    # stop being adjacent (and between files, through `any_out`).
     var i = 0;
     while (i < lines.len()) {
         let line = lines[i];

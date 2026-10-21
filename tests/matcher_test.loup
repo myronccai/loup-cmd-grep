@@ -1,5 +1,12 @@
 @mode(host.dual)
 
+# Unit tests for the compiled patterns (commands.matcher): selection,
+# several patterns, -i, -x, -w and the -o -w parts, and an invalid pattern.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
+# per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from cli.args import (Syntax);
 from commands.matcher import (Matcher, build_matcher);

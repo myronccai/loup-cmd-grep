@@ -1,5 +1,11 @@
 @mode(host.dual)
 
+# The --help text, the --version line, and the Usage and Try lines that
+# follow a usage error.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
+
 from appinfo import (APP_NAME, APP_VERSION);
 
 pub const USAGE_LINE: string = "Usage: grep [OPTION]... PATTERNS [FILE]...";

@@ -3,6 +3,9 @@
 # A ring buffer of the most recent lines that have not been printed, for
 # -B (before-context). It holds at most `capacity` lines; pushing into a
 # full ring overwrites the oldest one.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 pub class ContextRing {
     let capacity: int;

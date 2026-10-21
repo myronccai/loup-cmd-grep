@@ -2,6 +2,11 @@
 
 # The compiled patterns: which lines match, and which parts of a line -o
 # prints. See "Matcher" in specs/grep/design.md.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code. The regex
+# engine is the standard library's system.regex, which is written in Loup,
+# so it builds natively and also runs under `loup run` and Stage0.
 
 from system.regex import (Regex);
 from cli.args import (Syntax);
@@ -79,6 +84,10 @@ pub func build_matcher(patterns: list[string], syntax: Syntax, icase: bool, word
         parts.push(t.unwrap());
     }
     let joined = join_alternatives(parts);
+    # -x wins over -w, as in GNU grep. For -w a match needs a non-word
+    # character or the line's edge on each side; the -o regexes capture
+    # the text before the word (group 1) and the word (group 2), so that
+    # matches() can tell where each word starts.
     let use_word = word and !whole_line;
 
     var line_src = "(?:" + joined + ")";

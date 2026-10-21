@@ -1,6 +1,9 @@
 @mode(host.dual)
 
 # Helpers for reading inputs: lines, binary detection and paths.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 pub const STDIN_LABEL: string = "(standard input)";
 

@@ -1,7 +1,17 @@
 @mode(host.dual)
 
 # grep: compiles the patterns, walks the operands, searches each input and
-# prints the results. The only module that prints.
+# prints the results. Of the command modules, the only one that prints.
+#
+# Runtime: host.dual. Compiled into the native binary build/grep by `make
+# build`; `loup run source/main.loup` interprets the same code.
+# Every input is read with readBytes and decoded, so bytes that are not
+# UTF-8 make the input binary rather than failing the read.
+#
+# Structure: Totals carries what happened across inputs; search_input
+# reads, searches and prints one input; run_grep builds the Matcher, then
+# goes through the operands (standard input, missing files, directories
+# under -r, plain files) and picks the exit status.
 
 from io.fs import (isDir, walk);
 from appinfo import (APP_NAME, EXIT_OK, EXIT_NO_MATCH, EXIT_TROUBLE);

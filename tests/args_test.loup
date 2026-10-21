@@ -1,5 +1,14 @@
 @mode(host.dual)
 
+# Unit tests for grep's argument parsing (cli.args): pattern and file
+# operands, -e, patterns split at newlines, clusters, `--` and `-`,
+# context options, the last of -l/-L and -h/-H, matchers, long option
+# prefixes, usage errors and the tokenizer.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
+# per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from cli.args import (Options, ArgError, Syntax, ListMode, parse_args, tokenize, find_long, split_patterns, context_length);
 
